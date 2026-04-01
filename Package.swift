@@ -26,7 +26,10 @@ let package = Package(
             targets: ["MLXEmbedders"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/ml-explore/mlx-swift", .upToNextMinor(from: "0.31.1")),
+        // FORK: Points to sconedrag/mlx-swift with mmap weight loading changes.
+        // This ensures SPM resolves the forked mlx-swift (with MmapFileReader, malloc_nocopy)
+        // instead of the upstream ml-explore/mlx-swift.
+        .package(url: "https://github.com/sconedrag/mlx-swift", branch: "mmap-weight-loading"),
         .package(
             url: "https://github.com/huggingface/swift-transformers",
             .upToNextMinor(from: "1.2.0")

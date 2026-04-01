@@ -65,7 +65,8 @@ public func downloadModel(
 public func loadWeights(
     modelDirectory: URL, model: LanguageModel,
     quantization: BaseConfiguration.Quantization? = nil,
-    perLayerQuantization: BaseConfiguration.PerLayerQuantization? = nil
+    perLayerQuantization: BaseConfiguration.PerLayerQuantization? = nil,
+    useMmap: Bool = false
 ) throws {
     // load the weights and collect metadata from the first safetensor file
     var weights = [String: MLXArray]()
@@ -74,12 +75,22 @@ public func loadWeights(
         at: modelDirectory, includingPropertiesForKeys: nil)!
     for case let url as URL in enumerator {
         if url.pathExtension == "safetensors" {
-            let (w, m) = try loadArraysAndMetadata(url: url)
-            for (key, value) in w {
-                weights[key] = value
-            }
-            if metadata.isEmpty {
-                metadata = m
+            if useMmap {
+                // mmap path: weights are memory-mapped from disk. The OS manages paging.
+                // Weight pages are file-backed (clean) and don't count toward jetsam on iOS.
+                let w = try loadArraysMmap(url: url)
+                for (key, value) in w {
+                    weights[key] = value
+                }
+            } else {
+                // Standard path: weights are read into Metal shared-memory buffers via pread.
+                let (w, m) = try loadArraysAndMetadata(url: url)
+                for (key, value) in w {
+                    weights[key] = value
+                }
+                if metadata.isEmpty {
+                    metadata = m
+                }
             }
         }
     }
@@ -106,5 +117,12 @@ public func loadWeights(
     let parameters = ModuleParameters.unflattened(weights)
     try model.update(parameters: parameters, verify: [.all])
 
-    eval(model)
+    if !useMmap {
+        // Standard path: materialize all weights into Metal buffers now.
+        eval(model)
+    }
+    // mmap path: skip eval(model). Weights remain lazy — they page in from NVMe
+    // during the first forward pass. The OS manages which pages are resident.
+    // Pre-warming (calling eval(model) from the app after load) brings pages in
+    // during the loading UI rather than on first user query.
 }
