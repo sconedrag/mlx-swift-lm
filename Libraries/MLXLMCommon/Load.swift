@@ -62,11 +62,17 @@ public func downloadModel(
 /// calls ``LanguageModel/sanitize(weights:metadata:)`` to allow per-model preprocessing,
 /// applies optional quantization, and
 /// updates the model with the weights.
+#if os(iOS)
+private let _mmapDefault = true
+#else
+private let _mmapDefault = false
+#endif
+
 public func loadWeights(
     modelDirectory: URL, model: LanguageModel,
     quantization: BaseConfiguration.Quantization? = nil,
     perLayerQuantization: BaseConfiguration.PerLayerQuantization? = nil,
-    useMmap: Bool = false
+    useMmap: Bool = _mmapDefault
 ) throws {
     // load the weights and collect metadata from the first safetensor file
     var weights = [String: MLXArray]()
