@@ -61,10 +61,19 @@ public func downloadModel(
 /// This function loads all `safetensor` files in the given `modelDirectory`,
 /// calls ``LanguageModel/sanitize(weights:)``, applies optional quantization, and
 /// updates the model with the weights.
+// W4 (mmap weight serving): default to mmap on iOS so weight pages are
+// file-backed (clean) and survive jetsam; macOS keeps the pread path.
+#if os(iOS)
+public let _mmapDefault = true
+#else
+public let _mmapDefault = false
+#endif
+
 public func loadWeights(
     modelDirectory: URL, model: LanguageModel,
     quantization: BaseConfiguration.Quantization? = nil,
-    perLayerQuantization: BaseConfiguration.PerLayerQuantization? = nil
+    perLayerQuantization: BaseConfiguration.PerLayerQuantization? = nil,
+    useMmap: Bool = _mmapDefault
 ) throws {
     // load the weights
     var weights = [String: MLXArray]()
@@ -72,7 +81,9 @@ public func loadWeights(
         at: modelDirectory, includingPropertiesForKeys: nil)!
     for case let url as URL in enumerator {
         if url.pathExtension == "safetensors" {
-            let w = try loadArrays(url: url)
+            // W4: mmap path serves weights from file-backed clean pages (lazy
+            // page-in, no eval); standard path reads into Metal buffers via pread.
+            let w = try useMmap ? loadArraysMmap(url: url) : loadArrays(url: url)
             for (key, value) in w {
                 weights[key] = value
             }
@@ -101,5 +112,9 @@ public func loadWeights(
     let parameters = ModuleParameters.unflattened(weights)
     try model.update(parameters: parameters, verify: [.all])
 
-    eval(model)
+    // W4: standard path materializes all weights now; mmap path skips eval so
+    // weights stay lazy and page in (clean) from disk on first forward pass.
+    if !useMmap {
+        eval(model)
+    }
 }
